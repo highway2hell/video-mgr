@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Local ffmpeg binary (re-download via README instructions)
+bin/
+
+# Local config with personal media paths — never commit
+config.json
+
+# Playwright test artifacts
+.playwright-mcp/
+
+# Logs
+*.log

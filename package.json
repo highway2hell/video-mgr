@@ -1,0 +1,12 @@
+{
+  "name": "vid-mgr",
+  "version": "0.1.0",
+  "description": "A minimal self-hosted movie wall: scan local/NAS video folders, browse a poster grid, and stream videos in the browser.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

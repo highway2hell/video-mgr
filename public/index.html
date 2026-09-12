@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Movie Wall</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="header">
+    <h1 class="brand">Movie Wall</h1>
+    <div class="controls">
+      <input id="search" class="search" type="text" placeholder="Search titles..." autocomplete="off">
+      <button id="folders" class="btn">Folders</button>
+      <button id="rescan" class="btn">Rescan</button>
+    </div>
+  </header>
+
+  <nav id="categories" class="categories" aria-label="Categories"></nav>
+
+  <div id="notices" class="notices" hidden></div>
+
+  <main id="grid" class="grid"></main>
+
+  <div id="empty" class="empty" hidden>
+    <p class="empty-title">Nothing here yet</p>
+    <p class="empty-text">No videos found. Click <strong>Folders</strong> to add your movie folders, then press Rescan.</p>
+  </div>
+
+  <div id="player" class="player" hidden>
+    <div class="player-bar">
+      <span id="player-title" class="player-title"></span>
+      <button id="close" class="btn btn-close" aria-label="Close">Close</button>
+    </div>
+    <video id="video" controls autoplay playsinline></video>
+  </div>
+
+  <div id="ctxmenu" class="ctxmenu" hidden>
+    <button id="ctx-rethumb" class="ctx-item">Re-generate thumbnail</button>
+    <button id="ctx-delete" class="ctx-item ctx-danger">Delete file</button>
+  </div>
+
+  <div id="thumb-modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="thumb-title" class="modal-title"></span>
+        <button id="thumb-close" class="btn btn-close" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <img id="thumb-preview" class="thumb-preview" alt="Preview">
+        <div class="thumb-controls">
+          <input id="thumb-slider" class="thumb-slider" type="range" min="0" max="0" step="1" value="0">
+          <div class="thumb-time">
+            <span id="thumb-time-label">0:00</span>
+            <span id="thumb-duration">/ 0:00</span>
+          </div>
+          <div class="thumb-actions">
+            <button id="thumb-apply" class="btn btn-primary">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="dirs-modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <span class="modal-title">Folders</span>
+        <button id="dirs-close" class="btn btn-close" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div id="dirs-list" class="dirs-list"></div>
+        <div class="dirs-actions">
+          <button id="dirs-add" class="btn">Add folder</button>
+          <button id="dirs-save" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

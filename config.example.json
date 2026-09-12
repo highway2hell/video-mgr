@@ -1,0 +1,13 @@
+{
+  "port": 3000,
+  "mediaDirs": [
+    { "name": "Movies", "path": "/path/to/your/movies" },
+    { "name": "NAS", "path": "/Volumes/YourNAS/Media" }
+  ],
+  "videoExtensions": [".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm", ".ts"],
+  "posterNames": ["poster", "folder", "cover"],
+  "posterExtensions": [".jpg", ".jpeg", ".png", ".webp"],
+  "generateThumbnails": true,
+  "thumbnailSeconds": 60,
+  "scanOnStart": true
+}
