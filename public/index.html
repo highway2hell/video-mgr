@@ -35,6 +35,35 @@
     <video id="video" controls autoplay playsinline></video>
   </div>
 
+  <section id="series-view" class="series-view" hidden>
+    <div class="series-bar">
+      <button id="series-back" class="btn">← Back</button>
+      <div class="series-head">
+        <h2 id="series-title" class="series-title"></h2>
+        <div id="series-sub" class="series-sub"></div>
+      </div>
+      <button id="series-playall" class="btn btn-primary">Play all</button>
+    </div>
+    <div class="series-body">
+      <div class="series-stage">
+        <video id="series-video" controls playsinline preload="metadata"></video>
+        <div class="series-now">
+          <div class="series-now-text">
+            <span id="series-now-title" class="series-now-title"></span>
+            <span id="series-now-meta" class="series-now-meta"></span>
+          </div>
+          <div class="series-nav">
+            <button id="series-prev" class="btn">◀ Prev</button>
+            <button id="series-next" class="btn">Next ▶</button>
+          </div>
+        </div>
+      </div>
+      <div class="series-list-wrap">
+        <div id="series-list" class="ep-list"></div>
+      </div>
+    </div>
+  </section>
+
   <div id="ctxmenu" class="ctxmenu" hidden>
     <button id="ctx-rethumb" class="ctx-item">Re-generate thumbnail</button>
     <button id="ctx-delete" class="ctx-item ctx-danger">Delete file</button>

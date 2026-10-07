@@ -76,14 +76,26 @@ function isHidden(name) {
   return name.startsWith('.');
 }
 
+// Per media directory: "auto" folds only numbered runs, "force" folds every
+// folder holding 2+ videos, "off" never folds.
+const SERIES_MODES = ['auto', 'force', 'off'];
+
+function normalizeMode(mode) {
+  return SERIES_MODES.indexOf(mode) === -1 ? 'auto' : mode;
+}
+
 function normalizeDirs() {
   return (config.mediaDirs || [])
     .map((d) => {
       if (typeof d === 'string' && d) {
-        return { name: path.basename(d) || d, path: d };
+        return { name: path.basename(d) || d, path: d, mode: 'auto' };
       }
       if (d && typeof d === 'object' && d.path) {
-        return { name: d.name || path.basename(d.path) || d.path, path: d.path };
+        return {
+          name: d.name || path.basename(d.path) || d.path,
+          path: d.path,
+          mode: normalizeMode(d.mode),
+        };
       }
       return null;
     })
@@ -96,6 +108,190 @@ function saveConfig() {
     JSON.stringify(config, null, 2) + '\n',
     'utf8'
   );
+}
+
+// How much "gaps" a numbered folder may have and still count as one series:
+// max - min + 1 must not exceed count * SERIES_GAP_FACTOR. This keeps a folder
+// of real episodes (01, 02, 03 …) together while refusing to bundle unrelated
+// films that merely happen to start or end with a number (e.g. "3 Idiots"
+// next to "12 Angry Men").
+const SERIES_GAP_FACTOR = 2;
+
+// At least this share of the numbered files must carry a distinct number.
+// Two files sharing an episode number is fine; every file sharing one number
+// (a "2024 …" folder) is not a series.
+const SERIES_UNIQUE_RATIO = 0.8;
+
+// Episode numbers above this are treated as junk (hash IDs, concatenated
+// dates) and the folder is numbered 1..N instead; the badge has to stay short.
+const EPISODE_NUMBER_MAX = 9999;
+
+// The episode number of a video: a leading number (01.mp4, 10462 xxx.mp4) or,
+// failing that, a trailing one (Show 1.mp4, Show 2.mp4). Returns null when the
+// basename carries no number at all.
+function sequenceOf(basenameNoExt) {
+  let m = /^(\d+)/.exec(basenameNoExt);
+  if (m) return parseInt(m[1], 10);
+  m = /(\d+)\s*$/.exec(basenameNoExt);
+  if (m) return parseInt(m[1], 10);
+  return null;
+}
+
+// Fold video files that live in the same folder and carry a dense number into
+// one "series" (a season / a numbered collection). Movies that don't qualify
+// stay standalone cards. A few repeated numbers are tolerated (two files that
+// share an episode number still belong together), but a folder where almost
+// every file repeats the same number is not a series — that is what a folder of
+// dated or same-year files looks like.
+function buildSeries(allMovies) {
+  const dirs = normalizeDirs();
+  const byDir = new Map();
+
+  for (const m of allMovies) {
+    m.seriesId = null;
+    m.episode = null;
+    const dir = path.dirname(m.filePath);
+    let bucket = byDir.get(dir);
+    if (!bucket) {
+      bucket = [];
+      byDir.set(dir, bucket);
+    }
+    bucket.push(m);
+  }
+
+  const pending = [];
+
+  for (const [dir, group] of byDir) {
+    if (group.length < 2) continue;
+
+    const mode = normalizeMode(group[0].seriesMode);
+    if (mode === 'off') continue;
+
+    const entries = group.map((movie) => ({
+      movie,
+      seq: sequenceOf(path.basename(movie.filePath, path.extname(movie.filePath))),
+    }));
+
+    if (mode === 'auto') {
+      const numbered = entries.filter((e) => e.seq != null);
+      if (numbered.length < 2) continue;
+
+      const values = numbered.map((n) => n.seq);
+      const distinct = new Set(values).size;
+      if (distinct < 2 || distinct < numbered.length * SERIES_UNIQUE_RATIO) continue;
+
+      const min = Math.min.apply(null, values);
+      const max = Math.max.apply(null, values);
+      if (max - min + 1 > distinct * SERIES_GAP_FACTOR) continue;
+
+      entries.length = 0;
+      entries.push.apply(entries, numbered);
+    }
+
+    // Numbered files first, in number order; unnumbered ones after them, by
+    // title — a forced folder is usually a mix of both.
+    entries.sort(
+      (a, b) =>
+        (a.seq == null ? 1 : 0) - (b.seq == null ? 1 : 0) ||
+        (a.seq || 0) - (b.seq || 0) ||
+        a.movie.title.localeCompare(b.movie.title)
+    );
+
+    // Long IDs and concatenated dates make unusable episode badges (the row
+    // only has room for a few digits), so such a folder is numbered 1..N in the
+    // order we just sorted instead.
+    const maxSeq = entries.reduce((max, e) => (e.seq != null && e.seq > max ? e.seq : max), 0);
+    if (maxSeq > EPISODE_NUMBER_MAX) {
+      for (const entry of entries) entry.seq = null;
+    }
+
+    assignEpisodes(entries);
+
+    pending.push({
+      dir,
+      category: entries[0].movie.category,
+      entries,
+      size: entries.reduce((sum, n) => sum + (n.movie.size || 0), 0),
+      mtime: Math.max.apply(null, entries.map((n) => n.movie.mtime || 0)),
+    });
+  }
+
+  nameSeries(pending, dirs);
+  pending.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+
+  return pending.map((s, id) => {
+    for (const entry of s.entries) {
+      entry.movie.seriesId = id;
+      entry.movie.episode = entry.episode;
+    }
+    const cover = s.entries.find((n) => n.movie.posterPath) || s.entries[0];
+    return {
+      id,
+      title: s.title,
+      dir: s.dir,
+      category: s.category,
+      count: s.entries.length,
+      coverId: cover.movie.id,
+      size: s.size,
+      mtime: s.mtime,
+    };
+  });
+}
+
+// Hand out unique, ascending episode numbers. A file keeps its own number while
+// that number is still free; duplicates and unnumbered files continue from the
+// previous one, so the order stays unambiguous everywhere (clients sort by it).
+function assignEpisodes(entries) {
+  let next = 1;
+  for (const entry of entries) {
+    if (entry.seq != null && entry.seq >= next) next = entry.seq;
+    entry.episode = next;
+    next++;
+  }
+}
+
+// A series is named after its folder, but folders called "Videos" / "Season 1"
+// are common, so when two series would end up with the same name we grow the
+// name towards the media root ("Show · Videos") until it is unique again.
+function nameSeries(pending, dirs) {
+  for (const s of pending) {
+    let owner = null;
+    for (const d of dirs) {
+      if ((s.dir === d.path || s.dir.startsWith(d.path + path.sep)) &&
+          (!owner || d.path.length > owner.path.length)) {
+        owner = d;
+      }
+    }
+    s.owner = owner;
+    s.segs = owner
+      ? path.relative(owner.path, s.dir).split(path.sep).filter(Boolean)
+      : [path.basename(s.dir) || s.dir];
+    s.fallback = owner ? owner.name : (path.basename(s.dir) || s.dir);
+    s.title = null;
+  }
+
+  const titleAt = (s, depth) => {
+    if (!s.segs.length) return s.fallback;
+    return s.segs.slice(-depth).join(' · ');
+  };
+
+  const maxDepth = Math.max(1, ...pending.map((s) => s.segs.length));
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const counts = new Map();
+    for (const s of pending) {
+      if (s.title) continue;
+      const t = titleAt(s, depth);
+      counts.set(t, (counts.get(t) || 0) + 1);
+    }
+    for (const s of pending) {
+      if (s.title) continue;
+      const t = titleAt(s, depth);
+      if (counts.get(t) === 1) s.title = t;
+    }
+  }
+  for (const s of pending) {
+    if (!s.title) s.title = s.segs.join(' · ') || s.fallback;
+  }
 }
 
 async function findPoster(videoDir, videoBase) {
@@ -120,7 +316,7 @@ async function findPoster(videoDir, videoBase) {
   return null;
 }
 
-async function walkDir(dir, category, movies, scanErrors) {
+async function walkDir(dir, mediaDir, movies, scanErrors) {
   let entries;
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -137,7 +333,7 @@ async function walkDir(dir, category, movies, scanErrors) {
     if (entry.isSymbolicLink()) continue;
 
     if (entry.isDirectory()) {
-      await walkDir(fullPath, category, movies, scanErrors);
+      await walkDir(fullPath, mediaDir, movies, scanErrors);
     } else if (entry.isFile() && isVideoFile(entry.name)) {
       let stat;
       try {
@@ -157,7 +353,9 @@ async function walkDir(dir, category, movies, scanErrors) {
         posterPath,
         size: stat.size,
         ext,
-        category,
+        category: mediaDir.name,
+        seriesMode: mediaDir.mode,
+        mtime: stat.mtimeMs,
       });
     }
   }
@@ -168,7 +366,7 @@ async function scan() {
   const scanErrors = [];
 
   for (const d of normalizeDirs()) {
-    await walkDir(d.path, d.name, movies, scanErrors);
+    await walkDir(d.path, d, movies, scanErrors);
   }
 
   movies.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -176,11 +374,31 @@ async function scan() {
     m.id = i;
   });
 
-  return { movies, scanErrors };
+  return { movies, series: buildSeries(movies), scanErrors };
 }
 
 let movies = [];
+let series = [];
 let scanErrors = [];
+
+// Adopt a fresh scan result as the live index, re-indexing movie ids so that
+// series/episode references stay consistent.
+function applyScan(result) {
+  movies = result.movies;
+  series = result.series || [];
+  scanErrors = result.scanErrors;
+  movies.forEach((m, i) => {
+    m.id = i;
+  });
+}
+
+// Rebuild the series index after the movie array changed in place (deletion).
+function reindex() {
+  movies.forEach((m, i) => {
+    m.id = i;
+  });
+  series = buildSeries(movies);
+}
 
 function thumbPathFor(filePath) {
   const dir = path.dirname(filePath);
@@ -208,13 +426,19 @@ function extractFrame(filePath, outPath, seconds) {
   });
 }
 
+// Durations are probed lazily (only for episodes the browser actually scrolls
+// into view) and cached in memory for the lifetime of the process.
+const durationCache = new Map();
+
 function probeDuration(filePath) {
+  if (durationCache.has(filePath)) return Promise.resolve(durationCache.get(filePath));
   return new Promise((resolve) => {
     if (!ffmpegPath) return resolve(null);
     execFile(ffmpegPath, ['-i', filePath], { timeout: 30000 }, (err, stdout, stderr) => {
       const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr || '');
       if (!m) return resolve(null);
       const sec = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseFloat(m[3]);
+      durationCache.set(filePath, sec);
       resolve(sec);
     });
   });
@@ -261,13 +485,42 @@ function movieSummary() {
       hasPoster: !!m.posterPath,
       category: m.category,
       filePath: m.filePath,
+      mtime: m.mtime || 0,
+      seriesId: m.seriesId == null ? null : m.seriesId,
+      episode: m.episode == null ? null : m.episode,
     })),
+    series,
     count: movies.length,
+    seriesCount: series.length,
     categories,
     scanErrors,
     mediaDirs: dirs,
   };
 }
+
+// One series plus its episodes, ordered by episode number.
+app.get('/api/series/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const s = series[id];
+  if (!s) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const episodes = movies
+    .filter((m) => m.seriesId === id)
+    .sort((a, b) => (a.episode || 0) - (b.episode || 0))
+    .map((m) => ({
+      id: m.id,
+      title: m.title,
+      size: m.size,
+      ext: m.ext,
+      hasPoster: !!m.posterPath,
+      filePath: m.filePath,
+      mtime: m.mtime || 0,
+      episode: m.episode,
+    }));
+  res.json({ series: s, episodes });
+});
 
 app.get('/api/movies', (req, res) => {
   res.json(movieSummary());
@@ -291,6 +544,7 @@ app.post('/api/dirs', async (req, res) => {
     cleaned.push({
       name: (typeof d.name === 'string' && d.name.trim()) ? d.name.trim() : (path.basename(p) || p),
       path: p,
+      mode: normalizeMode(d.mode),
     });
   }
   config.mediaDirs = cleaned;
@@ -301,8 +555,7 @@ app.post('/api/dirs', async (req, res) => {
     return;
   }
   const result = await scan();
-  movies = result.movies;
-  scanErrors = result.scanErrors;
+  applyScan(result);
   res.json(movieSummary());
   generateThumbnails();
 });
@@ -315,8 +568,7 @@ app.post('/api/scan', async (req, res) => {
     return;
   }
   const result = await scan();
-  movies = result.movies;
-  scanErrors = result.scanErrors;
+  applyScan(result);
   res.json(movieSummary());
   generateThumbnails();
 });
@@ -476,9 +728,7 @@ app.delete('/api/movies/:id', async (req, res) => {
     // generated thumbnail may not exist; ignore
   }
   movies.splice(id, 1);
-  movies.forEach((m, i) => {
-    m.id = i;
-  });
+  reindex();
   res.json(movieSummary());
 });
 
@@ -490,9 +740,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 async function startup() {
   if (config.scanOnStart) {
-    const result = await scan();
-    movies = result.movies;
-    scanErrors = result.scanErrors;
+    applyScan(await scan());
   }
 
   try {
@@ -502,7 +750,7 @@ async function startup() {
       for (const d of normalizeDirs()) {
         console.log('  - ' + d.name + ' (' + d.path + ')');
       }
-      console.log('Found ' + movies.length + ' video(s).');
+      console.log('Found ' + movies.length + ' video(s) in ' + series.length + ' series.');
     });
   } catch (err) {
     console.error('Failed to start server on port ' + config.port + ': ' + err.message);
