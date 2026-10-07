@@ -10,5 +10,8 @@ config.json
 # Playwright test artifacts
 .playwright-mcp/
 
+# macOS
+.DS_Store
+
 # Logs
 *.log

@@ -1,0 +1,15 @@
+services:
+  vid-mgr:
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-http://172.17.0.1:20171}
+        HTTPS_PROXY: ${HTTPS_PROXY:-http://172.17.0.1:20171}
+    container_name: vid-mgr
+    ports:
+      - "3000:3000"
+    volumes:
+      - /mnt/nas:/mnt/nas:rw
+      # writable so the in-app Folders dialog can save per-category settings
+      - ./config.json:/app/config.json
+    restart: unless-stopped
